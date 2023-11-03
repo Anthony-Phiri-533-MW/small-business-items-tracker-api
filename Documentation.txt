@@ -1,0 +1,45 @@
+API Documentation
+1. Create a Record
+Endpoint: /records
+Method: POST
+Description: Create a new record and add it to the database.
+Request Body:
+amount (integer): The amount of the record.
+item (string): The description of the record.
+record_date (string): The date of the record.
+Response:
+Returns the newly created record in JSON format.
+2. Get All Records
+Endpoint: /records
+Method: GET
+Description: Retrieve a list of all records from the database.
+Response:
+Returns a JSON array of all records.
+3. Get a Single Record
+Endpoint: /records/<int:id>
+Method: GET
+Description: Retrieve a single record by its id from the database.
+Request Parameters:
+id (integer): The unique identifier of the record.
+Response:
+Returns the requested record in JSON format.
+4. Update a Record
+Endpoint: /records/<int:id>
+Method: PUT
+Description: Update an existing record in the database.
+Request Parameters:
+id (integer): The unique identifier of the record to be updated.
+Request Body:
+amount (integer): The updated amount of the record.
+item (string): The updated description of the record.
+record_date (string): The updated date of the record.
+Response:
+Returns the updated record in JSON format.
+5. Delete a Record
+Endpoint: /records/<int:id>
+Method: DELETE
+Description: Delete a record from the database.
+Request Parameters:
+id (integer): The unique identifier of the record to be deleted.
+Response:
+Returns the deleted record in JSON format.
