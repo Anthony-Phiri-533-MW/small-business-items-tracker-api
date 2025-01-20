@@ -2,10 +2,11 @@ from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from flask_cors import CORS
 from flask_migrate import Migrate
 from flask_bcrypt import Bcrypt
+from flask_restx import Api, Resource, fields
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -22,206 +23,197 @@ db = SQLAlchemy(app)
 # Initialize Marshmallow
 ma = Marshmallow(app)
 
-#flask migrate
+# Flask migrate
 migrate = Migrate(app, db)
 
 # Initialize Flask-Bcrypt
 bcrypt = Bcrypt(app)
+
+# Initialize Flask-RESTX API
+api = Api(app, doc="/docs")  # Swagger UI will be available at /docs
 
 # Product class/model
 class StoreData(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     amount = db.Column(db.Integer)
     item = db.Column(db.String(240))
-    #record_date = db.Column(db.DateTime, default=datetime.utcnow)
-    record_date = db.Column(db.String(240))
+    record_date = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
 
-    def __init__(self, amount, item, record_date):
+    def __init__(self, amount, item):
         self.amount = amount
         self.item = item
-        self.record_date = record_date
 
-#User data class
+# User data class
 class StoreUserRecords(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(240), unique=True, nullable=False)
     password = db.Column(db.String(240), nullable=False)
 
-    # def __init__(self, name, password):
-    #     self.name = name
-    #     self.password = password
-
     def __init__(self, name, password):
         self.name = name
-        self.password = bcrypt.generate_password_hash(password).decode('utf-8')  # Hash the password
+        self.password = bcrypt.generate_password_hash(password).decode('utf-8')
 
     def check_password(self, password):
-        return bcrypt.check_password_hash(self.password, password)  # Check password
+        return bcrypt.check_password_hash(self.password, password)
 
 # Expense Schema
 class DataSchema(ma.Schema):
     class Meta:
-        fields = ('id', 'amount', 'item', 'record_date')  # Corrected 'record_data' to 'record_date'
+        fields = ('id', 'amount', 'item', 'record_date')
 
 # User Schema
 class UserSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = StoreUserRecords
-        fields = ('id', 'name', 'password')  # Define fields to serialize
+        fields = ('id', 'name', 'password')
 
-# Initialize the schema
+# Initialize schemas
 data_schema = DataSchema()
-data_schemas = DataSchema(many=True)  # Corrected 'data_Shemas' to 'data_schemas'
-
-# Initialize the user schema
+data_schemas = DataSchema(many=True)
 user_schema = UserSchema()
 users_schema = UserSchema(many=True)
 
+# Define Swagger models using Flask-RESTX
+store_data_model = api.model('StoreData', {
+    'amount': fields.Integer(required=True, description='Amount of the item'),
+    'item': fields.String(required=True, description='Name of the item'),
+    'record_date': fields.String(required=False, description='Record date (Optional)', default=datetime.utcnow().isoformat())
+})
+
+user_model = api.model('StoreUserRecords', {
+    'name': fields.String(required=True, description='Username'),
+    'password': fields.String(required=True, description='Password')
+})
+
 # Create a route to add a record
-@app.route('/records', methods=['POST'])
-def add_record():
-    amount = request.json['amount']
-    item = request.json['item']
-    record_date = request.json['record_date']
+@api.route('/records')
+class RecordList(Resource):
+    @api.doc(description="Create a new store record")
+    @api.expect(store_data_model, validate=True)
+    def post(self):
+        data = request.json
+        new_record = StoreData(amount=data['amount'], item=data['item'])
+        db.session.add(new_record)
+        db.session.commit()
+        return data_schema.jsonify(new_record), 201
 
-    new_record = StoreData(amount=amount, item=item, record_date=record_date)
-
-    db.session.add(new_record)
-    db.session.commit()
-
-    return data_schema.jsonify(new_record)
-
-# Create a route to get records
-@app.route('/records', methods=['GET'])
-def get_records():
-    all_records = StoreData.query.all()
-    results = data_schemas.dump(all_records)  # Corrected 'data_schema' to 'data_schemas'
-
-    return jsonify(results)
+    @api.doc(description="Get all store records")
+    def get(self):
+        all_records = StoreData.query.all()
+        return data_schemas.dump(all_records), 200
 
 # Create a route to get a single record
-@app.route('/records/<int:id>', methods=['GET'])
-def get_record(id):
-    record = StoreData.query.get(id)
-    return data_schema.jsonify(record)
+@api.route('/records/<int:id>')
+class Record(Resource):
+    @api.doc(description="Get a store record by ID")
+    def get(self, id):
+        record = StoreData.query.get(id)
+        if record:
+            return data_schema.jsonify(record)
+        return {'message': 'Record not found'}, 404
 
 # Create a route to update a record
-@app.route('/records/<int:id>', methods=['PUT'])
-def update_record(id):
-    record = StoreData.query.get(id)
+@api.route('/records/<int:id>')
+class RecordUpdate(Resource):
+    @api.doc(description="Update a store record by ID")
+    @api.expect(store_data_model, validate=True)
+    def put(self, id):
+        record = StoreData.query.get(id)
+        if record:
+            data = request.json
+            record.amount = data['amount']
+            record.item = data['item']
+            record.record_date = data.get('record_date', record.record_date)
+            db.session.commit()
+            return data_schema.jsonify(record)
+        return {'message': 'Record not found'}, 404
 
-    amount = request.json['amount']
-    item = request.json['item']
-    record_date = request.json['record_date']
+# Delete a record
+@api.route('/records/<int:id>')
+class RecordDelete(Resource):
+    @api.doc(description="Delete a store record by ID")
+    def delete(self, id):
+        record = StoreData.query.get(id)
+        if record:
+            db.session.delete(record)
+            db.session.commit()
+            return data_schema.jsonify(record)
+        return {'message': 'Record not found'}, 404
 
-    record.amount = amount
-    record.item = item
-    record.record_date = record_date 
+# Routes for managing users
+@api.route('/users')
+class UserList(Resource):
+    @api.doc(description="Create a new user")
+    @api.expect(user_model, validate=True)
+    def post(self):
+        data = request.json
+        new_user = StoreUserRecords(name=data['name'], password=data['password'])
+        db.session.add(new_user)
+        db.session.commit()
+        return user_schema.jsonify(new_user), 201
 
-    db.session.commit()
-
-    return data_schema.jsonify(record)
-
-    #return data_schema.jsonify(new_record)
-
-#Delete a record
-@app.route('/records/<int:id>', methods=['DELETE'])
-def delete_record(id):
-    record = StoreData.query.get(id)
-    db.session.delete(record)
-
-    db.session.commit()
-    
-    return data_schema.jsonify(record)
-
-
-#Routes for managing users
-# Route to create a new user
-@app.route('/users', methods=['POST'])
-def add_user():
-    name = request.json['name']
-    password = request.json['password']
-
-    new_user = StoreUserRecords(name=name, password=password)
-
-    db.session.add(new_user)
-    db.session.commit()
-
-    return user_schema.jsonify(new_user)
-
-# Route to get all users
-@app.route('/users', methods=['GET'])
-def get_users():
-    all_users = StoreUserRecords.query.all()
-    result = users_schema.dump(all_users)
-    return jsonify(result)
+    @api.doc(description="Get all users")
+    def get(self):
+        all_users = StoreUserRecords.query.all()
+        return users_schema.dump(all_users), 200
 
 # Route to get a single user by ID
-@app.route('/users/<int:id>', methods=['GET'])
-def get_user(id):
-    user = StoreUserRecords.query.get_or_404(id)
-    return user_schema.jsonify(user)
+@api.route('/users/<int:id>')
+class User(Resource):
+    @api.doc(description="Get a user by ID")
+    def get(self, id):
+        user = StoreUserRecords.query.get_or_404(id)
+        return user_schema.jsonify(user)
 
-# Route to update a user by ID
-@app.route('/users/<int:id>', methods=['PUT'])
-def update_user(id):
-    user = StoreUserRecords.query.get_or_404(id)
+# Route to update a user
+@api.route('/users/<int:id>')
+class UserUpdate(Resource):
+    @api.doc(description="Update a user by ID")
+    @api.expect(user_model, validate=True)
+    def put(self, id):
+        user = StoreUserRecords.query.get_or_404(id)
+        data = request.json
+        user.name = data['name']
+        user.password = data['password']
+        db.session.commit()
+        return user_schema.jsonify(user)
 
-    name = request.json['name']
-    password = request.json['password']
+# Route to delete a user
+@api.route('/users/<int:id>')
+class UserDelete(Resource):
+    @api.doc(description="Delete a user by ID")
+    def delete(self, id):
+        user = StoreUserRecords.query.get_or_404(id)
+        db.session.delete(user)
+        db.session.commit()
+        return user_schema.jsonify(user)
 
-    user.name = name
-    user.password = password
+# Authentication routes
+@api.route('/register')
+class Register(Resource):
+    @api.doc(description="Register a new user")
+    @api.expect(user_model, validate=True)
+    def post(self):
+        data = request.json
+        existing_user = StoreUserRecords.query.filter_by(name=data['name']).first()
+        if existing_user:
+            return {'message': 'User already exists'}, 400
+        new_user = StoreUserRecords(name=data['name'], password=data['password'])
+        db.session.add(new_user)
+        db.session.commit()
+        return user_schema.jsonify(new_user), 201
 
-    db.session.commit()
+@api.route('/login')
+class Login(Resource):
+    @api.doc(description="Login a user")
+    @api.expect(user_model, validate=True)
+    def post(self):
+        data = request.json
+        user = StoreUserRecords.query.filter_by(name=data['name']).first()
+        if user and user.check_password(data['password']):
+            return {'message': 'Login successful', 'user': user_schema.dump(user)}, 200
+        return {'message': 'Invalid credentials'}, 401
 
-    return user_schema.jsonify(user)
-
-# Route to delete a user by ID
-@app.route('/users/<int:id>', methods=['DELETE'])
-def delete_user(id):
-    user = StoreUserRecords.query.get_or_404(id)
-
-    db.session.delete(user)
-    db.session.commit()
-
-    return user_schema.jsonify(user)
-
-
-#authentication routes
-# Register route
-@app.route('/register', methods=['POST'])
-def register():
-    name = request.json['name']
-    password = request.json['password']
-
-    # Check if user already exists
-    existing_user = StoreUserRecords.query.filter_by(name=name).first()
-    if existing_user:
-        return jsonify({'message': 'User already exists'}), 400
-
-    # Create new user
-    new_user = StoreUserRecords(name=name, password=password)
-
-    db.session.add(new_user)
-    db.session.commit()
-
-    return user_schema.jsonify(new_user), 201
-
-# Login route
-@app.route('/login', methods=['POST'])
-def login():
-    name = request.json['name']
-    password = request.json['password']
-
-    # Find the user by name
-    user = StoreUserRecords.query.filter_by(name=name).first()
-
-    if user and user.check_password(password):  # Verify the password
-        return jsonify({'message': 'Login successful', 'user': user_schema.dump(user)}), 200
-    else:
-        return jsonify({'message': 'Invalid credentials'}), 401
-    
 # Run the server
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
