@@ -4,6 +4,7 @@ from flask_marshmallow import Marshmallow
 import os
 from datetime import datetime
 from flask_cors import CORS
+from flask_migrate import Migrate
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -20,6 +21,9 @@ db = SQLAlchemy(app)
 # Initialize Marshmallow
 ma = Marshmallow(app)
 
+#flask migrate
+migrate = Migrate(app, db)
+
 # Product class/model
 class StoreData(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -33,14 +37,34 @@ class StoreData(db.Model):
         self.item = item
         self.record_date = record_date
 
+#User data class
+class StoreUserRecords(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(240), unique=True, nullable=False)
+    password = db.Column(db.String(240), nullable=False)
+
+    def __init__(self, name, password):
+        self.name = name
+        self.password = password
+
 # Expense Schema
 class DataSchema(ma.Schema):
     class Meta:
         fields = ('id', 'amount', 'item', 'record_date')  # Corrected 'record_data' to 'record_date'
 
+# User Schema
+class UserSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = StoreUserRecords
+        fields = ('id', 'name', 'password')  # Define fields to serialize
+
 # Initialize the schema
 data_schema = DataSchema()
 data_schemas = DataSchema(many=True)  # Corrected 'data_Shemas' to 'data_schemas'
+
+# Initialize the user schema
+user_schema = UserSchema()
+users_schema = UserSchema(many=True)
 
 # Create a route to add a record
 @app.route('/records', methods=['POST'])
@@ -99,6 +123,59 @@ def delete_record(id):
     
     return data_schema.jsonify(record)
 
+
+#Routes for managing users
+# Route to create a new user
+@app.route('/users', methods=['POST'])
+def add_user():
+    name = request.json['name']
+    password = request.json['password']
+
+    new_user = StoreUserRecords(name=name, password=password)
+
+    db.session.add(new_user)
+    db.session.commit()
+
+    return user_schema.jsonify(new_user)
+
+# Route to get all users
+@app.route('/users', methods=['GET'])
+def get_users():
+    all_users = StoreUserRecords.query.all()
+    result = users_schema.dump(all_users)
+    return jsonify(result)
+
+# Route to get a single user by ID
+@app.route('/users/<int:id>', methods=['GET'])
+def get_user(id):
+    user = StoreUserRecords.query.get_or_404(id)
+    return user_schema.jsonify(user)
+
+# Route to update a user by ID
+@app.route('/users/<int:id>', methods=['PUT'])
+def update_user(id):
+    user = StoreUserRecords.query.get_or_404(id)
+
+    name = request.json['name']
+    password = request.json['password']
+
+    user.name = name
+    user.password = password
+
+    db.session.commit()
+
+    return user_schema.jsonify(user)
+
+# Route to delete a user by ID
+@app.route('/users/<int:id>', methods=['DELETE'])
+def delete_user(id):
+    user = StoreUserRecords.query.get_or_404(id)
+
+    db.session.delete(user)
+    db.session.commit()
+
+    return user_schema.jsonify(user)
+
 # Run the server
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5001)
