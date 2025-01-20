@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from flask_cors import CORS
 from flask_migrate import Migrate
+from flask_bcrypt import Bcrypt
 
 # Initialize the Flask app
 app = Flask(__name__)
@@ -23,6 +24,9 @@ ma = Marshmallow(app)
 
 #flask migrate
 migrate = Migrate(app, db)
+
+# Initialize Flask-Bcrypt
+bcrypt = Bcrypt(app)
 
 # Product class/model
 class StoreData(db.Model):
@@ -43,9 +47,16 @@ class StoreUserRecords(db.Model):
     name = db.Column(db.String(240), unique=True, nullable=False)
     password = db.Column(db.String(240), nullable=False)
 
+    # def __init__(self, name, password):
+    #     self.name = name
+    #     self.password = password
+
     def __init__(self, name, password):
         self.name = name
-        self.password = password
+        self.password = bcrypt.generate_password_hash(password).decode('utf-8')  # Hash the password
+
+    def check_password(self, password):
+        return bcrypt.check_password_hash(self.password, password)  # Check password
 
 # Expense Schema
 class DataSchema(ma.Schema):
@@ -176,6 +187,41 @@ def delete_user(id):
 
     return user_schema.jsonify(user)
 
+
+#authentication routes
+# Register route
+@app.route('/register', methods=['POST'])
+def register():
+    name = request.json['name']
+    password = request.json['password']
+
+    # Check if user already exists
+    existing_user = StoreUserRecords.query.filter_by(name=name).first()
+    if existing_user:
+        return jsonify({'message': 'User already exists'}), 400
+
+    # Create new user
+    new_user = StoreUserRecords(name=name, password=password)
+
+    db.session.add(new_user)
+    db.session.commit()
+
+    return user_schema.jsonify(new_user), 201
+
+# Login route
+@app.route('/login', methods=['POST'])
+def login():
+    name = request.json['name']
+    password = request.json['password']
+
+    # Find the user by name
+    user = StoreUserRecords.query.filter_by(name=name).first()
+
+    if user and user.check_password(password):  # Verify the password
+        return jsonify({'message': 'Login successful', 'user': user_schema.dump(user)}), 200
+    else:
+        return jsonify({'message': 'Invalid credentials'}), 401
+    
 # Run the server
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
