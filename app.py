@@ -95,7 +95,8 @@ class RecordList(Resource):
         new_record = StoreData(amount=data['amount'], item=data['item'])
         db.session.add(new_record)
         db.session.commit()
-        return data_schema.jsonify(new_record), 201
+        #return data_schema.jsonify(new_record), 201
+        return jsonify(data_schema.dump(new_record)), 201
 
     @api.doc(description="Get all store records")
     def get(self):
